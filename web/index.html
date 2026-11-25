@@ -5,9 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>유사도 퀴즈</title>
 <style>
-  :root { --bg:#f7f7f5; --card:#fff; --ink:#1d1d1b; --sub:#6b6b66; --line:#e3e3df; --accent:#2f6fed; --good:#1f9d55; }
+  :root { --bg:#f7f7f5; --card:#fff; --ink:#1d1d1b; --sub:#6b6b66; --line:#e3e3df; --accent:#2f6fed; --good:#1f9d55; --orange:#f08a00; }
   @media (prefers-color-scheme: dark) {
-    :root { --bg:#161617; --card:#212123; --ink:#f0f0ee; --sub:#9a9a96; --line:#333336; --accent:#6c9bff; --good:#3ecf7c; }
+    :root { --bg:#161617; --card:#212123; --ink:#f0f0ee; --sub:#9a9a96; --line:#333336; --accent:#6c9bff; --good:#3ecf7c; --orange:#ffa31a; }
   }
   * { box-sizing: border-box; }
   body { margin:0; background:var(--bg); color:var(--ink); font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif; }
@@ -21,6 +21,8 @@
   .row .bar { flex:1; height:8px; background:var(--line); border-radius:4px; overflow:hidden; }
   .row .bar i { display:block; height:100%; background:var(--accent); }
   .row .p { width:56px; text-align:right; font-variant-numeric:tabular-nums; color:var(--sub); font-size:14px; }
+  .row.last .bar i { background:var(--orange); }
+  .row.last .w, .row.last .p { color:var(--orange); }
   .row.win .bar i { background:var(--good); }
   .row.win .w, .row.win .p { color:var(--good); }
   form { display:flex; gap:8px; }
@@ -116,7 +118,7 @@ try { level = localStorage.getItem("level") || "normal"; } catch (e) {}
 if (!LEVELS[level]) level = "normal";
 
 function pool() {
-  const q = (a) => hintsMap[String(a)][hintsMap[String(a)].length - 1][1];
+  const q = (a) => hintsMap[String(a)][4][1];
   const sorted = answers.map(q).sort((x, y) => x - y);
   const at = (p) => sorted[Math.floor(sorted.length * p)];
   if (level === "easy")  return answers.filter(a => a < 3000 && q(a) >= at(0.5));
@@ -144,7 +146,7 @@ function newGame() {
   answer = candidates[Math.floor(Math.random() * candidates.length)];
   antPos = Math.random() < 0.5 ? 1 : 2;
   const hints = hintsMap[String(answer)];
-  scale = 90 / hints[hints.length - 1][1];
+  scale = 90 / hints[4][1];
   guesses = [];
   done = false;
   renderHints();
@@ -156,8 +158,8 @@ function newGame() {
   $("guess").focus();
 }
 
-function row(w, p, win) {
-  return `<div class="row${win ? " win" : ""}"><span class="w">${w}</span>` +
+function row(w, p, win, last) {
+  return `<div class="row${win ? " win" : last ? " last" : ""}"><span class="w">${w}</span>` +
          `<span class="bar"><i style="width:${p}%"></i></span><span class="p">${p}%</span></div>`;
 }
 
@@ -166,16 +168,22 @@ function setInput(on) { $("guess").disabled = !on; $("submit").disabled = !on; }
 
 function renderGuesses() {
   const sorted = [...guesses].sort((a, b) => b.p - a.p);
-  $("guesses").innerHTML = sorted.map(g => row(g.w, g.p, g.p === 100)).join("");
+  const lastWord = guesses[guesses.length - 1].w;   // 가장 최근에 추측한 단어는 주황색
+  $("guesses").innerHTML = sorted.map(g => row(g.w, g.p, g.p === 100, g.w === lastWord)).join("");
   $("count").textContent = `(${guesses.length}회)`;
 }
 
 // 힌트는 처음에 1개, 틀릴 때마다 1개씩 늘어 최대 5개. 게임이 끝나면 모두 공개한다.
 // 힌트 5개 = 유사어 상위 4개 + 반대말 1개. 점수 환산에는 유사어 5위를 쓴다.
+// 이미 추측한 단어는 힌트에서 빼고, 여분 유사어로 채운다.
 function hintList() {
-  const sims = hintsMap[String(answer)].slice(0, 4).map(([j]) => j);
-  sims.splice(antPos, 0, antsMap[String(answer)][0]);   // 반대말은 2번째 또는 3번째 (게임마다 무작위)
-  return sims;
+  const used = new Set(guesses.map(g => g.w));
+  const ant = antsMap[String(answer)][0];
+  const antUsed = used.has(words[ant]);
+  const sims = hintsMap[String(answer)].map(([j]) => j).filter(j => !used.has(words[j]));
+  const list = sims.slice(0, antUsed ? 5 : 4);
+  if (!antUsed) list.splice(antPos, 0, ant);   // 반대말은 2번째 또는 3번째 (게임마다 무작위)
+  return list;
 }
 
 function renderHints() {

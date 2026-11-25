@@ -14,7 +14,7 @@ URL = "https://dl.fbaipublicfiles.com/fasttext/vectors-crawl/cc.ko.300.vec.gz"
 SCAN_LINES = 300_000   # 빈도순 상위 몇 줄까지 읽을지
 VOCAB_MAX = 40_000     # 추측 가능한 단어 수
 ANSWER_POOL = 6_000    # 정답은 이 순위 안의 2글자 명사에서만
-N_HINTS = 5
+N_HINTS = 10   # 화면에는 4~5개만 쓰고, 추측한 단어를 빼고 채우기 위한 여분 + 5위는 점수 환산 기준
 OUT = Path(__file__).resolve().parent.parent / "web" / "data"
 HANGUL = re.compile(r"^[가-힣]{2,6}$")
 
