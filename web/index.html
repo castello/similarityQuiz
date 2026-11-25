@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>유사도 퀴즈</title>
+<style>
+  :root { --bg:#f7f7f5; --card:#fff; --ink:#1d1d1b; --sub:#6b6b66; --line:#e3e3df; --accent:#2f6fed; --good:#1f9d55; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#161617; --card:#212123; --ink:#f0f0ee; --sub:#9a9a96; --line:#333336; --accent:#6c9bff; --good:#3ecf7c; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif; }
+  main { max-width:520px; margin:0 auto; padding:24px 16px 64px; }
+  h1 { font-size:22px; margin:0 0 4px; }
+  .desc { color:var(--sub); font-size:14px; margin:0 0 20px; line-height:1.5; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:16px; }
+  .card h2 { font-size:13px; color:var(--sub); font-weight:600; margin:0 0 10px; }
+  .row { display:flex; align-items:center; gap:10px; padding:6px 0; }
+  .row .w { width:64px; font-weight:600; }
+  .row .bar { flex:1; height:8px; background:var(--line); border-radius:4px; overflow:hidden; }
+  .row .bar i { display:block; height:100%; background:var(--accent); }
+  .row .p { width:56px; text-align:right; font-variant-numeric:tabular-nums; color:var(--sub); font-size:14px; }
+  .row.win .bar i { background:var(--good); }
+  .row.win .w, .row.win .p { color:var(--good); }
+  form { display:flex; gap:8px; }
+  input { flex:1; font-size:18px; padding:12px; border:1px solid var(--line); border-radius:10px; background:var(--card); color:var(--ink); }
+  button { font-size:16px; padding:12px 18px; border:0; border-radius:10px; background:var(--accent); color:#fff; cursor:pointer; }
+  button.ghost { background:transparent; color:var(--sub); border:1px solid var(--line); padding:8px 14px; font-size:14px; }
+  button:disabled, input:disabled { opacity:.5; cursor:default; }
+  #msg { min-height:22px; margin:8px 2px 0; font-size:14px; color:var(--sub); }
+  #msg.err { color:#d64545; }
+  #msg.ok { color:var(--good); font-weight:600; }
+  .tools { display:flex; gap:8px; margin-top:12px; }
+  .meta { color:var(--sub); font-size:13px; margin-top:8px; }
+  .levels { display:flex; gap:6px; margin-bottom:4px; }
+  .levels button { flex:1; background:var(--card); color:var(--ink); border:1px solid var(--line); padding:8px 0; font-size:14px; }
+  .levels button.on { background:var(--accent); color:#fff; border-color:var(--accent); }
+  #levelDesc { margin:0 0 14px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>유사도 퀴즈</h1>
+  <p class="desc">숨은 두 글자 단어를 맞혀보세요. 정답과 <b>유사도가 높은 단어 5개</b>가 힌트로 주어지고, 입력한 단어마다 정답과의 유사도가 표시됩니다.</p>
+
+  <div class="levels" id="levels">
+    <button type="button" data-level="easy">쉬움</button>
+    <button type="button" data-level="normal">보통</button>
+    <button type="button" data-level="hard">어려움</button>
+  </div>
+  <p class="meta" id="levelDesc"></p>
+
+  <div class="card">
+    <h2>힌트 · 정답과 비슷한 단어</h2>
+    <div id="hints">불러오는 중…</div>
+  </div>
+
+  <form id="form" autocomplete="off">
+    <input id="guess" placeholder="단어 입력" maxlength="6" disabled>
+    <button id="submit" disabled>제출</button>
+  </form>
+  <div id="msg"></div>
+
+  <div class="card" style="margin-top:12px">
+    <h2>내 추측 <span id="count"></span></h2>
+    <div id="guesses"><span class="meta">아직 추측한 단어가 없습니다.</span></div>
+  </div>
+
+  <div class="tools">
+    <button class="ghost" id="giveup">포기하고 정답 보기</button>
+    <button class="ghost" id="restart">새 게임</button>
+  </div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let words, answers, hintsMap, antsMap, dim, vecs, index, antPos = 1;
+let answer, answerVec, scale, guesses, done;
+
+async function load() {
+  const [meta, buf] = await Promise.all([
+    fetch("data/vocab.json").then(r => r.json()),
+    fetch("data/vectors.bin").then(r => r.arrayBuffer()),
+  ]);
+  ({ words, answers, dim } = meta);
+  hintsMap = meta.hints;
+  antsMap = meta.ants;
+  vecs = new Int8Array(buf);
+  index = new Map(words.map((w, i) => [w, i]));
+  newGame();
+}
+
+function cos(i, j) {
+  let s = 0;
+  const a = i * dim, b = j * dim;
+  for (let k = 0; k < dim; k++) s += vecs[a + k] * vecs[b + k];
+  return s / (127 * 127);
+}
+
+// 힌트 5개 중 5위가 90%가 되도록 점수를 환산한다. 정답은 100%, 그 외는 최대 99%.
+function score(i) {
+  if (i === answer) return 100;
+  return Math.max(0, Math.min(99, Math.round(cos(i, answer) * scale)));
+}
+
+// 난이도: 정답 후보 풀을 나눈다. (words는 빈도순이라 인덱스가 작을수록 흔한 단어)
+// 힌트 5위의 코사인이 높을수록 정답 주변 의미가 뚜렷해서 쉽다.
+const LEVELS = {
+  easy:   { label: "쉬움",   desc: "흔한 단어 중 힌트가 뚜렷한 정답만 나옵니다." },
+  normal: { label: "보통",   desc: "모든 정답 후보에서 나옵니다." },
+  hard:   { label: "어려움", desc: "힌트가 모호한 정답만 나옵니다." },
+};
+let level = "normal";
+try { level = localStorage.getItem("level") || "normal"; } catch (e) {}
+if (!LEVELS[level]) level = "normal";
+
+function pool() {
+  const q = (a) => hintsMap[String(a)][hintsMap[String(a)].length - 1][1];
+  const sorted = answers.map(q).sort((x, y) => x - y);
+  const at = (p) => sorted[Math.floor(sorted.length * p)];
+  if (level === "easy")  return answers.filter(a => a < 3000 && q(a) >= at(0.5));
+  if (level === "hard")  return answers.filter(a => q(a) <= at(0.4));
+  return answers;
+}
+
+function renderLevels() {
+  document.querySelectorAll("#levels button").forEach(b =>
+    b.classList.toggle("on", b.dataset.level === level));
+  $("levelDesc").textContent = LEVELS[level].desc;
+}
+
+$("levels").addEventListener("click", (e) => {
+  const l = e.target.dataset && e.target.dataset.level;
+  if (!l || l === level) return;
+  level = l;
+  try { localStorage.setItem("level", level); } catch (err) {}
+  if (words) newGame();
+});
+
+function newGame() {
+  renderLevels();
+  const candidates = pool();
+  answer = candidates[Math.floor(Math.random() * candidates.length)];
+  antPos = Math.random() < 0.5 ? 1 : 2;
+  const hints = hintsMap[String(answer)];
+  scale = 90 / hints[hints.length - 1][1];
+  guesses = [];
+  done = false;
+  renderHints();
+  $("guesses").innerHTML = '<span class="meta">아직 추측한 단어가 없습니다.</span>';
+  $("count").textContent = "";
+  setMsg("");
+  setInput(true);
+  $("guess").value = "";
+  $("guess").focus();
+}
+
+function row(w, p, win) {
+  return `<div class="row${win ? " win" : ""}"><span class="w">${w}</span>` +
+         `<span class="bar"><i style="width:${p}%"></i></span><span class="p">${p}%</span></div>`;
+}
+
+function setMsg(t, cls = "") { $("msg").textContent = t; $("msg").className = cls; }
+function setInput(on) { $("guess").disabled = !on; $("submit").disabled = !on; }
+
+function renderGuesses() {
+  const sorted = [...guesses].sort((a, b) => b.p - a.p);
+  $("guesses").innerHTML = sorted.map(g => row(g.w, g.p, g.p === 100)).join("");
+  $("count").textContent = `(${guesses.length}회)`;
+}
+
+// 힌트는 처음에 1개, 틀릴 때마다 1개씩 늘어 최대 5개. 게임이 끝나면 모두 공개한다.
+// 힌트 5개 = 유사어 상위 4개 + 반대말 1개. 점수 환산에는 유사어 5위를 쓴다.
+function hintList() {
+  const sims = hintsMap[String(answer)].slice(0, 4).map(([j]) => j);
+  sims.splice(antPos, 0, antsMap[String(answer)][0]);   // 반대말은 2번째 또는 3번째 (게임마다 무작위)
+  return sims;
+}
+
+function renderHints() {
+  const hints = hintList();
+  const shown = done ? hints.length : Math.min(hints.length, 1 + guesses.length);
+  $("hints").innerHTML = hints.slice(0, shown)
+    .map((j) => row(words[j], score(j))).join("") +
+    (shown < hints.length
+      ? `<div class="meta">힌트 ${shown}/${hints.length} · 틀릴 때마다 하나씩 늘어나요</div>` : "");
+}
+
+function finish(text) {
+  done = true;
+  renderHints();
+  setInput(false);
+  setMsg(text, "ok");
+}
+
+$("form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  if (done) return;
+  const w = $("guess").value.trim();
+  $("guess").value = "";
+  if (!w) return;
+  if (!/^[가-힣]+$/.test(w)) return setMsg("한글 단어만 입력할 수 있어요.", "err");
+  const i = index.get(w);
+  if (i === undefined) return setMsg(`'${w}'은(는) 사전에 없는 단어예요.`, "err");
+  if (guesses.some(g => g.w === w)) return setMsg("이미 입력한 단어예요.", "err");
+  const p = score(i);
+  guesses.push({ w, p });
+  renderGuesses();
+  if (i === answer) return finish(`정답! '${w}' — ${guesses.length}번 만에 맞혔어요 🎉`);
+  renderHints();
+  setMsg(`'${w}' 유사도 ${p}%`);
+});
+
+$("giveup").addEventListener("click", () => {
+  if (done) return;
+  finish(`정답은 '${words[answer]}'였어요.`);
+});
+$("restart").addEventListener("click", newGame);
+
+load().catch(() => {
+  $("hints").textContent = "데이터를 불러오지 못했어요. web 폴더에서 `python3 -m http.server`로 실행해 주세요.";
+});
+</script>
+</body>
+</html>
